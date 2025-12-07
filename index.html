@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic glTF Product Configurator</title>
+    <style>
+        /* Basic styling for the 3D canvas and UI */
+        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        #container { width: 100%; height: 80vh; background-color: #f0f0f0; }
+        #controls { padding: 20px; background-color: #eee; }
+        #price-display { font-size: 1.2em; font-weight: bold; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    
+    <div id="container">
+        </div>
+
+    <div id="controls">
+        <h3>Chair Customization</h3>
+        
+        <label for="color-select">Color:</label>
+        <select id="color-select">
+            <option value="Original" selected>Original</option>
+            <option value="Blue">Blue</option>
+            <option value="Red">Red</option>
+            <option value="Green">Green</option>
+            <option value="Yellow">Yellow</option>
+            <option value="Black">Black</option>
+            <option value="White">White</option>
+            <option value="Grey">Grey</option>
+            <option value="Brown">Brown</option>
+            <option value="Orange">Orange</option>
+        </select>
+        
+        <label for="legs-select">Legs:</label>
+        <select id="legs-select">
+            <option value="4" selected>4 Legs</option>
+            <option value="3">3 Legs</option>
+        </select>
+        
+        <button id="apply-config">Apply Configuration</button>
+
+        <div id="price-display">Total Price: $100.00</div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        
+        const API_URL = 'http://127.0.0.1:8000/configure';
+        let scene, camera, renderer, chairModel;
+        const originalColors = new Map(); // Store original colors of components
+        
+        // --- 3D Initialization ---
+        function initThreeJS() {
+            // Setup scene, camera, renderer, and lighting
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f0f0);
+            
+            const container = document.getElementById('container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+            camera.position.set(0, 1, 3);
+            camera.lookAt(0, 0, 0);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+            
+            // Add better lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+            directionalLight2.position.set(-5, 3, -5);
+            scene.add(directionalLight2);
+            
+            // Add a test cube to verify scene is working
+            const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+            const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+            const testCube = new THREE.Mesh(geometry, material);
+            testCube.name = 'testCube';
+            scene.add(testCube);
+            console.log("Test cube added to scene");
+
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                if (chairModel) {
+                    chairModel.rotation.y += 0.005; // Rotate the model
+                }
+                renderer.render(scene, camera);
+            }
+            animate();
+            
+            // Handle resizing
+            window.addEventListener('resize', () => {
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height);
+            });
+            
+            console.log("Three.js initialized successfully");
+        }
+        
+        // --- GLTF Loading ---
+        function loadModel() {
+            console.log("Attempting to load chair1.glb model...");
+            const loader = new GLTFLoader();
+            
+            loader.load(
+                '/chair.glb',
+                (gltf) => {
+                    // Remove test cube
+                    const testCube = scene.getObjectByName('testCube');
+                    if (testCube) scene.remove(testCube);
+                    
+                    chairModel = gltf.scene;
+                    chairModel.name = 'ConfigurableChair';
+                    
+                    // Center and scale the model
+                    const box = new THREE.Box3().setFromObject(chairModel);
+                    const center = box.getCenter(new THREE.Vector3());
+                    chairModel.position.sub(center);
+                    
+                    scene.add(chairModel);
+                    console.log("Model loaded successfully!");
+                    console.log("Model structure:", chairModel);
+                    
+                    // Store original colors and list all objects in the model
+                    chairModel.traverse((child) => {
+                        console.log("Found object:", child.name, child.type);
+                        
+                        // Store original material colors
+                        if (child.isMesh && child.material) {
+                            if (Array.isArray(child.material)) {
+                                originalColors.set(child.name, child.material.map(mat => mat.color.clone()));
+                            } else {
+                                originalColors.set(child.name, child.material.color.clone());
+                            }
+                            console.log(`Stored original color for ${child.name}`);
+                        }
+                    });
+                    
+                    // Set initial state based on default selection
+                    document.getElementById('apply-config').click();
+                },
+                (progress) => {
+                    console.log('Loading progress:', (progress.loaded / progress.total * 100) + '%');
+                },
+                (error) => {
+                    console.error("Error loading the model:", error);
+                    alert("Failed to load 3D model. Check console for details.");
+                }
+            );
+        }
+        
+        // --- Configuration Logic (from previous script.js) ---
+
+        function findComponent(name) {
+            // Traverse the loaded model to find the specific component node/mesh
+            let foundComponent = null;
+            chairModel.traverse((node) => {
+                if (node.isMesh && node.name === name) {
+                    foundComponent = node;
+                }
+                // Check if it's a non-mesh node (like the leg groups)
+                if (node.isObject3D && node.name === name) {
+                    if (!foundComponent) { // Prefer mesh, but accept group
+                         foundComponent = node;
+                    }
+                }
+            });
+            return foundComponent;
+        }
+
+        function applyConfig(configData) {
+            const updateList = configData.update_list;
+            
+            updateList.forEach(instruction => {
+                // Handle special case for ALL_MESHES
+                if (instruction.component_id === 'ALL_MESHES') {
+                    chairModel.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            if (instruction.property_name === 'baseColorFactor') {
+                                if (instruction.value === "original") {
+                                    const originalColor = originalColors.get(child.name);
+                                    if (originalColor) {
+                                        if (Array.isArray(child.material)) {
+                                            child.material.forEach((mat, idx) => {
+                                                mat.color.copy(Array.isArray(originalColor) ? originalColor[idx] : originalColor);
+                                            });
+                                        } else {
+                                            child.material.color.copy(originalColor);
+                                        }
+                                        console.log(`Restored original color for ${child.name}`);
+                                    }
+                                } else {
+                                    if (Array.isArray(child.material)) {
+                                        child.material.forEach(mat => {
+                                            mat.color.setRGB(instruction.value[0], instruction.value[1], instruction.value[2]);
+                                        });
+                                    } else {
+                                        child.material.color.setRGB(instruction.value[0], instruction.value[1], instruction.value[2]);
+                                    }
+                                    console.log(`Applied color to ${child.name}`);
+                                }
+                            }
+                        }
+                    });
+                    return;
+                }
+                
+                const component = findComponent(instruction.component_id);
+
+                if (!component) {
+                    console.warn(`Component not found: ${instruction.component_id}`);
+                    return;
+                }
+
+                switch (instruction.property_name) {
+                    case 'baseColorFactor':
+                        if (component.material) {
+                            // Check if we should restore original color
+                            if (instruction.value === "original") {
+                                const originalColor = originalColors.get(instruction.component_id);
+                                if (originalColor) {
+                                    if (Array.isArray(component.material)) {
+                                        component.material.forEach((mat, idx) => {
+                                            if (Array.isArray(originalColor)) {
+                                                mat.color.copy(originalColor[idx]);
+                                            } else {
+                                                mat.color.copy(originalColor);
+                                            }
+                                        });
+                                    } else {
+                                        component.material.color.copy(originalColor);
+                                    }
+                                    console.log(`Restored original color for ${instruction.component_id}`);
+                                }
+                            } else {
+                                // Apply new color
+                                if (Array.isArray(component.material)) {
+                                    component.material.forEach(mat => {
+                                        mat.color.setRGB(instruction.value[0], instruction.value[1], instruction.value[2]);
+                                    });
+                                } else {
+                                    component.material.color.setRGB(instruction.value[0], instruction.value[1], instruction.value[2]);
+                                }
+                                console.log(`Applied color ${instruction.value} to ${instruction.component_id}`);
+                            }
+                        }
+                        break;
+
+                    case 'visible':
+                        component.visible = instruction.value;
+                        console.log(`Set visibility of ${instruction.component_id} to ${instruction.value}`);
+                        break;
+                }
+            });
+
+            document.getElementById('price-display').textContent = `Total Price: $${configData.final_price}`;
+        }
+
+        async function updateProductConfiguration(color, legCount) {
+            const requestPayload = {
+                seat_color: color,
+                leg_style: legCount
+            };
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestPayload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const configData = await response.json();
+                applyConfig(configData);
+
+            } catch (error) {
+                console.error("Error fetching or applying configuration:", error);
+            }
+        }
+        
+        // --- Event Listeners ---
+        function setupListeners() {
+            document.getElementById('apply-config').addEventListener('click', () => {
+                const color = document.getElementById('color-select').value;
+                const legCount = parseInt(document.getElementById('legs-select').value);
+                
+                updateProductConfiguration(color, legCount);
+            });
+        }
+        
+        // --- Start everything ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initThreeJS();
+            loadModel();
+            setupListeners();
+        });
+
+    </script>
+</body>
+</html>
